@@ -9,6 +9,7 @@ import 'paste_recipe.dart';
 import 'quick_type.dart';
 import 'share_recipes.dart';
 import 'slot.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 final themeNotifier = ValueNotifier<ThemeMode>(ThemeMode.system);
 
@@ -31,6 +32,9 @@ class KochKastenApp extends StatelessWidget {
         title: 'KochKasten',
         debugShowCheckedModeBanner: false,
         themeMode: mode,
+        locale: const Locale('de'),
+        supportedLocales: const [Locale('de')],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
         theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.deepOrange),
         darkTheme: ThemeData(
             useMaterial3: true,
@@ -158,7 +162,16 @@ class RecipeTile extends StatelessWidget {
   final Recipe r;
   final String? extra;
   final VoidCallback onTap;
-  const RecipeTile({super.key, required this.r, required this.onTap, this.extra});
+  final VoidCallback? onCooked; // Tippen: heute gekocht
+  final VoidCallback? onCookedPick; // Lang drücken: Datum wählen
+  const RecipeTile({
+    super.key,
+    required this.r,
+    required this.onTap,
+    this.extra,
+    this.onCooked,
+    this.onCookedPick,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -183,7 +196,21 @@ class RecipeTile extends StatelessWidget {
               child: ListTile(
                 title: Text(r.title),
                 subtitle: Text(sub),
-                trailing: r.favorite ? Icon(Icons.star, color: Colors.amber.shade700) : null,
+                trailing: (r.favorite || onCooked != null)
+                    ? Row(mainAxisSize: MainAxisSize.min, children: [
+                        if (r.favorite) Icon(Icons.star, color: Colors.amber.shade700),
+                        if (onCooked != null)
+                          InkWell(
+                            customBorder: const CircleBorder(),
+                            onTap: onCooked,
+                            onLongPress: onCookedPick,
+                            child: const Padding(
+                              padding: EdgeInsets.all(8),
+                              child: Icon(Icons.check_circle_outline),
+                            ),
+                          ),
+                      ])
+                    : null,
               ),
             ),
           ]),
@@ -192,7 +219,6 @@ class RecipeTile extends StatelessWidget {
     );
   }
 }
-
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
   @override
@@ -248,10 +274,70 @@ class _HomePageState extends State<HomePage> {
       .where((t) => t.isNotEmpty)
       .toList();
 
-  int score(Recipe r) => terms.where((t) => r.ingredients.any((i) {
-        final x = i.toLowerCase();
-        return x.contains(t) || (x.length >= 4 && t.contains(x));
-      })).length;
+bool _hit(Recipe r, String t) =>
+    r.title.toLowerCase().contains(t) ||
+    r.ingredients.any((i) {
+      final x = i.toLowerCase();
+      return x.contains(t) || (x.length >= 4 && t.contains(x));
+    });
+
+int score(Recipe r) => terms.where((t) => _hit(r, t)).length;
+
+/// Wie viele Suchbegriffe im Namen vorkommen (Namenstreffer stehen oben)
+int tScore(Recipe r) =>
+    terms.where((t) => r.title.toLowerCase().contains(t)).length;
+
+void _markCooked(Recipe r, [DateTime? when]) {
+  final prev = r.lastCooked;
+  setState(() => r.lastCooked = when ?? DateTime.now());
+  _save();
+  final label = when == null
+      ? 'als heute gekocht markiert'
+      : 'als gekocht am ${shortDate(when)} markiert';
+  ScaffoldMessenger.of(context)
+    ..clearSnackBars()
+    ..showSnackBar(SnackBar(
+      content: Text('"${r.title}" $label'),
+      action: SnackBarAction(
+        label: 'Rückgängig',
+        onPressed: () {
+          setState(() => r.lastCooked = prev);
+          _save();
+        },
+      ),
+    ));
+}
+
+/// Fragt, wann gekocht wurde: Heute / Gestern / Vorgestern / beliebiger Tag
+Future<DateTime?> _pickCookedDate() async {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final choice = await showDialog<int>(
+    context: context,
+    builder: (ctx) => SimpleDialog(title: const Text('Wann gekocht?'), children: [
+      SimpleDialogOption(onPressed: () => Navigator.pop(ctx, 0), child: const Text('Heute')),
+      SimpleDialogOption(onPressed: () => Navigator.pop(ctx, 1), child: const Text('Gestern')),
+      SimpleDialogOption(
+          onPressed: () => Navigator.pop(ctx, 2), child: const Text('Vorgestern')),
+      SimpleDialogOption(
+          onPressed: () => Navigator.pop(ctx, -1), child: const Text('Anderes Datum …')),
+    ]),
+  );
+  if (choice == null) return null;
+  if (choice >= 0) return today.subtract(Duration(days: choice));
+  if (!mounted) return null;
+  return showDatePicker(
+    context: context,
+    initialDate: today,
+    firstDate: today.subtract(const Duration(days: 730)),
+    lastDate: today,
+  );
+}
+
+Future<void> _markCookedOn(Recipe r) async {
+  final d = await _pickCookedDate();
+  if (d != null) _markCooked(r, d);
+}
 
   bool get needsBackup {
     if (hideBackupHint || all.length < 5) return false;
@@ -502,15 +588,27 @@ class _HomePageState extends State<HomePage> {
               Text(r.instructions),
               const SizedBox(height: 16),
             ],
-            FilledButton.icon(
-              icon: const Icon(Icons.check),
-              label: const Text('Heute gekocht'),
-              onPressed: () {
-                setState(() => r.lastCooked = DateTime.now());
-                _save();
-                Navigator.pop(ctx);
-              },
-            ),
+            Row(children: [
+              Expanded(
+                child: FilledButton.icon(
+                  icon: const Icon(Icons.check),
+                  label: const Text('Heute gekocht'),
+                  onPressed: () {
+                    Navigator.pop(ctx);
+                    _markCooked(r);
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.event),
+                label: const Text('Anderer Tag'),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _markCookedOn(r);
+                },
+              ),
+            ]),
             if (r.hasRecipe)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
@@ -602,7 +700,12 @@ class _HomePageState extends State<HomePage> {
               (!onlyPaused || r.paused))
           .toList();
       if (usePantry) {
-        list.sort((a, b) => score(b).compareTo(score(a)));
+        list.sort((a, b) {
+          final t = tScore(b).compareTo(tScore(a));
+          if (t != 0) return t;
+          final s = score(b).compareTo(score(a));
+          return s != 0 ? s : a.title.toLowerCase().compareTo(b.title.toLowerCase());
+        });
       } else {
         list.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
       }
@@ -623,11 +726,18 @@ class _HomePageState extends State<HomePage> {
           child: Text(usePantry ? 'Nichts mit diesen Zutaten gefunden' : 'Keine passenden Karten'));
     } else {
       body = ListView(padding: const EdgeInsets.only(bottom: 80), children: [
+        const Padding(
+          padding: EdgeInsets.fromLTRB(16, 0, 16, 4),
+          child: Text('✓ antippen = heute gekocht · lang drücken = anderer Tag',
+              style: TextStyle(fontSize: 12)),
+        ),
         for (final r in list)
           RecipeTile(
             r: r,
-            extra: usePantry ? '${score(r)} von ${terms.length} Zutaten passen' : null,
+            extra: usePantry ? '${score(r)} von ${terms.length} passen' : null,
             onTap: () => _open(r),
+            onCooked: () => _markCooked(r),
+            onCookedPick: () => _markCookedOn(r),
           ),
       ]);
     }
@@ -744,8 +854,8 @@ class _HomePageState extends State<HomePage> {
           padding: const EdgeInsets.all(12),
           child: TextField(
             decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.kitchen),
-              hintText: 'Was ist noch da? (z.B. Karotte, Feta)',
+              prefixIcon: Icon(Icons.search),
+              hintText: 'Suchen: Gericht oder Zutat (z.B. Fisch, Karotte)',
               border: OutlineInputBorder(),
             ),
             onChanged: (v) => setState(() => pantry = v),
