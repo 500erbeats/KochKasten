@@ -90,7 +90,7 @@ class PasteRecipePage extends StatefulWidget {
 class _PasteRecipePageState extends State<PasteRecipePage> {
   final ctrl = TextEditingController();
   PageMode mode = PageMode.mixed;
-  bool mergeRows = false;
+bool smart = true; // Layout erkennen (Spalten, Zutaten/Zubereitung)
   bool busy = false;
 
   @override
@@ -109,13 +109,14 @@ class _PasteRecipePageState extends State<PasteRecipePage> {
     if (f == null) return;
     setState(() => busy = true);
     try {
-      final t = await ocrText(f, mergeRows: mergeRows);
+    final t = smart ? await ocrRecipe(f) : await ocrText(f);
       if (!mounted) return;
       if (t.trim().isEmpty) {
         _msg('Kein Text erkannt. Näher ran, gerade fotografieren, besseres Licht?');
       } else {
         final cur = ctrl.text.trimRight();
         ctrl.text = cur.isEmpty ? t : '$cur\n$t';
+        if (smart) mode = PageMode.mixed;
       }
     } catch (e) {
       _msg('$e');
@@ -173,9 +174,9 @@ class _PasteRecipePageState extends State<PasteRecipePage> {
           Align(
             alignment: Alignment.centerLeft,
             child: FilterChip(
-              label: const Text('Spalten verbinden (Menge | Zutat)'),
-              selected: mergeRows,
-              onSelected: (v) => setState(() => mergeRows = v),
+              label: const Text('Layout erkennen (Spalten, Zutaten/Zubereitung)'),
+              selected: smart,
+              onSelected: (v) => setState(() => smart = v),
             ),
           ),
           if (busy) const LinearProgressIndicator(),

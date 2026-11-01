@@ -883,6 +883,33 @@ class _EditPageState extends State<EditPage> {
   late bool special = widget.recipe?.special ?? false;
   late Effort effort = widget.recipe?.effort ?? Effort.medium;
 
+  Future<void> _scan() async {
+    final cur = Recipe(
+      id: widget.recipe?.id ?? 'tmp',
+      title: title.text.trim(),
+      cat: cat,
+      ingredients: ing.text
+          .split('\n')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList(),
+      instructions: ins.text.trim(),
+      source: src.text.trim(),
+      special: special,
+      effort: effort,
+      favorite: widget.recipe?.favorite ?? false,
+      lastCooked: widget.recipe?.lastCooked,
+      pausedUntil: widget.recipe?.pausedUntil,
+    );
+    final res = await Navigator.push<Recipe>(
+        context, MaterialPageRoute(builder: (_) => PasteRecipePage(recipe: cur)));
+    if (res == null) return;
+    setState(() {
+      ing.text = res.ingredients.join('\n');
+      ins.text = res.instructions;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -950,6 +977,12 @@ class _EditPageState extends State<EditPage> {
             decoration: const InputDecoration(
                 labelText: 'Quelle / Kochbuch (z.B. "Schuhbeck, S. 45")',
                 border: OutlineInputBorder())),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _scan,
+          icon: const Icon(Icons.document_scanner),
+          label: const Text('Rezept per Foto / Text einlesen'),
+        ),
         const SizedBox(height: 12),
         TextField(
             controller: ing,

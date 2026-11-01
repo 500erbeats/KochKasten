@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'main.dart';
+import 'paste_recipe.dart';
 
 class ManagePage extends StatefulWidget {
   final List<Recipe> all;
@@ -65,6 +66,13 @@ class _ManagePageState extends State<ManagePage> {
             SimpleDialogOption(onPressed: () => Navigator.pop(ctx, v), child: Text(label)),
         ]),
       );
+
+  Future<void> _scan(Recipe r) async {
+    final res = await Navigator.push<Recipe>(
+        context, MaterialPageRoute(builder: (_) => PasteRecipePage(recipe: r)));
+    if (res == null || !mounted) return;
+    await _edit(res);
+  }
 
   void _remove(List<Recipe> rs) {
     final removed = <(int, Recipe)>[];
@@ -237,20 +245,25 @@ class _ManagePageState extends State<ManagePage> {
                     if ((counts[r.title.trim().toLowerCase()] ?? 0) > 1) 'doppelt!',
                   ].join(' · ')),
                   trailing: selecting
-                      ? null
-                      : Row(mainAxisSize: MainAxisSize.min, children: [
-                          IconButton(
-                            icon: Icon(r.favorite ? Icons.star : Icons.star_border,
-                                color: r.favorite ? Colors.amber.shade700 : null),
-                            onPressed: () {
-                              setState(() => r.favorite = !r.favorite);
-                              widget.onChanged();
-                            },
-                          ),
-                          IconButton(
-                              icon: const Icon(Icons.delete_outline),
-                              onPressed: () => _remove([r])),
-                        ]),
+                  ? null
+                  : Row(mainAxisSize: MainAxisSize.min, children: [
+                      if (!r.hasRecipe)
+                        IconButton(
+                          tooltip: 'Rezept einlesen',
+                          icon: const Icon(Icons.document_scanner_outlined),
+                          onPressed: () => _scan(r),
+                        ),
+                      IconButton(
+                        icon: Icon(r.favorite ? Icons.star : Icons.star_border,
+                            color: r.favorite ? Colors.amber.shade700 : null),
+                        onPressed: () {
+                          setState(() => r.favorite = !r.favorite);
+                          widget.onChanged();
+                        },
+                      ),
+                      IconButton(
+                          icon: const Icon(Icons.delete_outline), onPressed: () => _remove([r])),
+                    ]),
                   onTap: () => selecting ? _toggle(r) : _edit(r),
                   onLongPress: () => _toggle(r),
                 ),
