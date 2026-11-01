@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'main.dart';
+import 'ocr.dart';
 
 enum PageMode {
   ingredients('Zutaten'),
@@ -88,6 +90,8 @@ class PasteRecipePage extends StatefulWidget {
 class _PasteRecipePageState extends State<PasteRecipePage> {
   final ctrl = TextEditingController();
   PageMode mode = PageMode.mixed;
+  bool mergeRows = false;
+  bool busy = false;
 
   @override
   void dispose() {
@@ -95,23 +99,47 @@ class _PasteRecipePageState extends State<PasteRecipePage> {
     super.dispose();
   }
 
+  void _msg(String t) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(t)));
+  }
+
+  Future<void> _photo(ImageSource src) async {
+    final f = await pickPhoto(src);
+    if (f == null) return;
+    setState(() => busy = true);
+    try {
+      final t = await ocrText(f, mergeRows: mergeRows);
+      if (!mounted) return;
+      if (t.trim().isEmpty) {
+        _msg('Kein Text erkannt. Näher ran, gerade fotografieren, besseres Licht?');
+      } else {
+        final cur = ctrl.text.trimRight();
+        ctrl.text = cur.isEmpty ? t : '$cur\n$t';
+      }
+    } catch (e) {
+      _msg('$e');
+    }
+    if (mounted) setState(() => busy = false);
+  }
+
   void _go() {
-  final r = widget.recipe;
-  final p = parseRecipeText(ctrl.text, mode);
-  final old = [
-    for (final l in r.instructions.split('\n'))
-      if (l.trim().isNotEmpty) l.replaceFirst(RegExp(r'^\s*\d+\.\s*'), '').trim(),
-  ];
-  final steps = [...old, ...p.steps];
-  Navigator.pop(
-    context,
-    r.copyWith(
-      ingredients: [...r.ingredients, ...p.ing],
-      instructions:
-          steps.asMap().entries.map((e) => '${e.key + 1}. ${e.value}').join('\n'),
-    ),
-  );
-}
+    final r = widget.recipe;
+    final p = parseRecipeText(ctrl.text, mode);
+    final old = [
+      for (final l in r.instructions.split('\n'))
+        if (l.trim().isNotEmpty) l.replaceFirst(RegExp(r'^\s*\d+\.\s*'), '').trim(),
+    ];
+    final steps = [...old, ...p.steps];
+    Navigator.pop(
+      context,
+      r.copyWith(
+        ingredients: [...r.ingredients, ...p.ing],
+        instructions:
+            steps.asMap().entries.map((e) => '${e.key + 1}. ${e.value}').join('\n'),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -121,11 +149,42 @@ class _PasteRecipePageState extends State<PasteRecipePage> {
         padding: const EdgeInsets.all(16),
         child: Column(children: [
           const Text(
-              'Text aus dem Kochbuch hier einfügen oder eintippen. Auf dem iPhone: '
-              'Foto in der Fotos-App öffnen, unten rechts das Live-Text-Symbol antippen, '
-              'Text markieren und kopieren.',
+              'Foto einer gedruckten Kochbuchseite machen oder Text einfügen bzw. tippen. '
+              'Den erkannten Text unten prüfen und korrigieren.',
               style: TextStyle(fontSize: 12)),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+              child: FilledButton.tonalIcon(
+                onPressed: busy ? null : () => _photo(ImageSource.camera),
+                icon: const Icon(Icons.photo_camera),
+                label: const Text('Foto'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: busy ? null : () => _photo(ImageSource.gallery),
+                icon: const Icon(Icons.photo_library),
+                label: const Text('Galerie'),
+              ),
+            ),
+          ]),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilterChip(
+              label: const Text('Spalten verbinden (Menge | Zutat)'),
+              selected: mergeRows,
+              onSelected: (v) => setState(() => mergeRows = v),
+            ),
+          ),
+          if (busy) const LinearProgressIndicator(),
+          const SizedBox(height: 8),
+          const Align(
+            alignment: Alignment.centerLeft,
+            child: Text('Der Text enthält:', style: TextStyle(fontSize: 12)),
+          ),
+          const SizedBox(height: 4),
           SegmentedButton<PageMode>(
             segments: [
               for (final m in PageMode.values) ButtonSegment(value: m, label: Text(m.label))
@@ -141,7 +200,7 @@ class _PasteRecipePageState extends State<PasteRecipePage> {
               expands: true,
               textAlignVertical: TextAlignVertical.top,
               decoration: const InputDecoration(
-                  border: OutlineInputBorder(), hintText: 'Hier einfügen …'),
+                  border: OutlineInputBorder(), hintText: 'Erkannter oder eingefügter Text …'),
             ),
           ),
           const SizedBox(height: 12),

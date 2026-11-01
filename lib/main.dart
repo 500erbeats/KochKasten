@@ -567,8 +567,8 @@ Future<void> _markCookedOn(Recipe r) async {
               const Text('Zu dieser Karte gibt es noch kein Rezept.'),
               const SizedBox(height: 8),
               FilledButton.tonalIcon(
-                icon: const Icon(Icons.content_paste),
-                label: const Text('Rezept einfügen'),
+                icon: const Icon(Icons.document_scanner),
+                label: const Text('Rezept einlesen (Foto / Text)'),
                 onPressed: () {
                   Navigator.pop(ctx);
                   _pasteRecipe(r);

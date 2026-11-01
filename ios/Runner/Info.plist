@@ -66,5 +66,9 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Zum Einlesen von Rezeptseiten</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Zum Einlesen von Rezeptseiten aus der Galerie</string>
 </dict>
 </plist>
