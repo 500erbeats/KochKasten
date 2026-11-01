@@ -49,6 +49,10 @@ List<String> stepsFromRows(List<String> rows) {
 ({List<String> ing, List<String> steps}) parseRecipeText(String text, PageMode mode) {
   final rows =
       text.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+      // Stehen die Überschriften im Text, entscheidet der Text und nicht die Auswahl oben
+  final hasHeadings = rows.any((r) =>
+      RegExp(r'^(zutaten|zubereitung|anleitung)\s*:?$', caseSensitive: false).hasMatch(r));
+  if (hasHeadings) mode = PageMode.mixed;
   final ing = <String>[];
   final steps = <String>[];
   if (mode == PageMode.ingredients) {
@@ -105,24 +109,26 @@ bool smart = true; // Layout erkennen (Spalten, Zutaten/Zubereitung)
   }
 
   Future<void> _photo(ImageSource src) async {
-    final f = await pickPhoto(src);
-    if (f == null) return;
-    setState(() => busy = true);
-    try {
+  final f = await pickPhoto(src);
+  if (f == null) return;
+  setState(() => busy = true);
+  try {
     final t = smart ? await ocrRecipe(f) : await ocrText(f);
-      if (!mounted) return;
-      if (t.trim().isEmpty) {
-        _msg('Kein Text erkannt. Näher ran, gerade fotografieren, besseres Licht?');
-      } else {
+    if (!mounted) return;
+    if (t.trim().isEmpty) {
+      _msg('Kein Text erkannt. Näher ran, gerade fotografieren, besseres Licht?');
+    } else {
+      setState(() {
         final cur = ctrl.text.trimRight();
         ctrl.text = cur.isEmpty ? t : '$cur\n$t';
         if (smart) mode = PageMode.mixed;
-      }
-    } catch (e) {
-      _msg('$e');
+      });
     }
-    if (mounted) setState(() => busy = false);
+  } catch (e) {
+    _msg('$e');
   }
+  if (mounted) setState(() => busy = false);
+}
 
   void _go() {
     final r = widget.recipe;

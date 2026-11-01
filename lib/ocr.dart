@@ -202,8 +202,13 @@ List<String> _ingredientsFrom(List<_Ln> col) {
       out.add(t);
     }
   }
-  return out;
+  return out.map(_fixUnit).toList();
 }
+
+/// "1TL" -> "1 TL", "500g" -> "500 g"
+String _fixUnit(String s) => s.replaceFirstMapped(
+    RegExp(r'^(\d+(?:[.,]\d+)?)(TL|EL|Tl|El|kg|ml|cl|dl|g|l|Dose|Dosen|Prise|Bund|Msp)\b'),
+    (m) => '${m[1]} ${m[2]}');
 
 // ---------- Zubereitungsspalte ----------
 
