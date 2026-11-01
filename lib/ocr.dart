@@ -15,8 +15,9 @@ Future<File?> pickPhoto(ImageSource src) async {
 class _Ln {
   final String text;
   final Rect box;
-  final int block;
-  _Ln(this.text, this.box, this.block);
+  final int block; // Nummer des ML-Kit-Blocks
+  final int idx; // Zeile innerhalb des Blocks
+  _Ln(this.text, this.box, this.block, this.idx);
   double get left => box.left;
   double get right => box.right;
   double get top => box.top;
@@ -32,15 +33,53 @@ Future<List<_Ln>> _readLines(File f) async {
     final res = await rec.processImage(InputImage.fromFile(f));
     final out = <_Ln>[];
     for (var i = 0; i < res.blocks.length; i++) {
-      for (final l in res.blocks[i].lines) {
-        final t = l.text.trim();
-        if (t.isNotEmpty) out.add(_Ln(t, l.boundingBox, i));
+      final ls = res.blocks[i].lines;
+      for (var j = 0; j < ls.length; j++) {
+        final t = ls[j].text.trim();
+        if (t.isNotEmpty) out.add(_Ln(t, ls[j].boundingBox, i, j));
       }
     }
-    return out;
+    return _upright(out);
   } finally {
     await rec.close();
   }
+}
+
+/// iPhone-Fotos liegen intern oft quer. ML Kit liest den Text richtig, liefert die
+/// Koordinaten aber im gedrehten Bild. Hier werden sie zurückgedreht.
+List<_Ln> _upright(List<_Ln> ls) {
+  final wide = ls.where((l) => l.text.length >= 6).toList();
+  if (wide.length < 3) return ls;
+  // Normale Textzeilen sind breiter als hoch. Sonst sind die Koordinaten gedreht.
+  final ratio = _median([for (final l in wide) l.box.width / max(1.0, l.box.height)]);
+  if (ratio >= 1) return ls;
+
+  // Richtung: Wandern die Folgezeilen eines Blocks nach rechts (+x) oder links (-x)?
+  final byBlock = <int, List<_Ln>>{};
+  for (final l in ls) {
+    byBlock.putIfAbsent(l.block, () => []).add(l);
+  }
+  var vote = 0;
+  for (final b in byBlock.values) {
+    b.sort((a, c) => a.idx.compareTo(c.idx));
+    for (var i = 1; i < b.length; i++) {
+      final dx = b[i].box.center.dx - b[i - 1].box.center.dx;
+      final dy = b[i].box.center.dy - b[i - 1].box.center.dy;
+      if (dx.abs() > dy.abs()) vote += dx > 0 ? 1 : -1;
+    }
+  }
+  final down = vote >= 0; // iPhone Hochformat: Folgezeilen = größeres x
+  return [
+    for (final l in ls)
+      _Ln(
+        l.text,
+        down
+            ? Rect.fromLTRB(-l.box.bottom, l.box.left, -l.box.top, l.box.right)
+            : Rect.fromLTRB(l.box.top, -l.box.right, l.box.bottom, -l.box.left),
+        l.block,
+        l.idx,
+      ),
+  ];
 }
 
 /// Roher Text in der Reihenfolge, wie ML Kit ihn liefert (Fallback)
@@ -99,7 +138,7 @@ final _metaRe = RegExp(
     caseSensitive: false);
 
 final _stopRe = RegExp(
-    r'^(tipps?\b|unser\s+tipp|variationen?\b|zubehör\b|einstellung\b|hinweis\b|nährwerte\b)',
+    r'^(tipps?\b|unser\s+tipp|variationen?\b|zubehör\b|einstellung\b|hinweis\b|nährwerte\b|automatikprogramm\b|manuell\b)',
     caseSensitive: false);
 
 bool _isMeta(String t) {
@@ -152,10 +191,12 @@ List<String> _ingredientsFrom(List<_Ln> col) {
   final out = <String>[];
   for (var i = 0; i < texts.length; i++) {
     final t = texts[i];
-    // umgebrochene Zeile: keine Menge, enger Abstand zur Zeile davor oder davor endet mit Komma
+    // Fortsetzung einer umgebrochenen Zutat: keine Menge am Anfang und
+    // (Zeile davor endet mit Komma ODER klein geschrieben und eng darunter)
     final tight = i > 0 && pitch > 0 && (cys[i] - cys[i - 1]) < pitch * 0.85;
     final prevComma = out.isNotEmpty && out.last.endsWith(',');
-    if (out.isNotEmpty && !_amountRe.hasMatch(t) && (tight || prevComma)) {
+    final lower = RegExp(r'^[a-zäöüß]').hasMatch(t);
+    if (out.isNotEmpty && !_amountRe.hasMatch(t) && (prevComma || (tight && lower))) {
       out[out.length - 1] = _join(out.last, t);
     } else {
       out.add(t);
@@ -173,51 +214,23 @@ List<String> _ingredientsFrom(List<_Ln> col) {
 }
 
 List<String> _stepsFrom(List<_Ln> col) {
-  final byBlock = <int, List<_Ln>>{};
-  for (final l in col) {
-    byBlock.putIfAbsent(l.block, () => []).add(l);
+  final texts = <String>[];
+  final cys = <double>[];
+  for (final r in _rowsOf(col)) {
+    final t = _rowText(r);
+    if (t.isEmpty) continue;
+    if (_stopRe.hasMatch(t)) break;
+    if (_isMeta(t) || RegExp(r'^\d{2,3}$').hasMatch(t)) continue;
+    texts.add(t);
+    cys.add(_rowCy(r));
   }
-  final blocks = byBlock.values.toList();
-  for (final bl in blocks) {
-    bl.sort((a, b) => a.top.compareTo(b.top));
-  }
-  blocks.sort((a, b) {
-    final c = a.first.top.compareTo(b.first.top);
-    return c != 0 ? c : a.first.left.compareTo(b.first.left);
-  });
-
-  // typischer Zeilenabstand innerhalb eines Blocks
-  final gaps = <double>[];
-  for (final bl in blocks) {
-    for (var i = 1; i < bl.length; i++) {
-      final g = bl[i].cy - bl[i - 1].cy;
-      if (g > 0) gaps.add(g);
-    }
-  }
-  final pitch = _median(gaps);
-
-  // Zeilenfolge: (Text, beginnt neuen Absatz)
-  final seq = <(String, bool)>[];
-  var stop = false;
-  for (final bl in blocks) {
-    for (var i = 0; i < bl.length; i++) {
-      final t = _clean(bl[i].text);
-      if (t.isEmpty) continue;
-      if (_stopRe.hasMatch(t)) {
-        stop = true;
-        break;
-      }
-      if (_isMeta(t) || RegExp(r'^\d{2,3}$').hasMatch(t)) continue;
-      final newPara = i == 0 || (pitch > 0 && bl[i].cy - bl[i - 1].cy > pitch * 1.5);
-      seq.add((t, newPara));
-    }
-    if (stop) break;
-  }
+  if (texts.isEmpty) return [];
+  final pitch = _median([for (var i = 1; i < cys.length; i++) cys[i] - cys[i - 1]]);
 
   // Sind die Schritte nummeriert? (mindestens 1 und 2 in Folge)
   var e = 1;
   var found = 0;
-  for (final (t, _) in seq) {
+  for (final t in texts) {
     final m = _marker(t);
     if (m != null && m.$1 == e) {
       found++;
@@ -233,23 +246,22 @@ List<String> _stepsFrom(List<_Ln> col) {
     cur = '';
   }
 
-  if (numbered) {
-    var expect = 1;
-    for (final (t, _) in seq) {
+  var expect = 1;
+  for (var i = 0; i < texts.length; i++) {
+    final t = texts[i];
+    if (numbered) {
       final m = _marker(t);
       if (m != null && m.$1 == expect) {
         flush();
         expect++;
         cur = m.$2;
-      } else {
-        cur = cur.isEmpty ? t : _join(cur, t);
+        continue;
       }
-    }
-  } else {
-    for (final (t, newPara) in seq) {
+    } else {
+      final newPara = i == 0 || (pitch > 0 && cys[i] - cys[i - 1] > pitch * 1.45);
       if (newPara) flush();
-      cur = cur.isEmpty ? t : _join(cur, t);
     }
+    cur = cur.isEmpty ? t : _join(cur, t);
   }
   flush();
   return steps;
