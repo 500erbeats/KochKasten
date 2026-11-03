@@ -75,16 +75,28 @@ class _RulesPainter extends CustomPainter {
 
 class _Reel {
   final List<Recipe> cards;
-  final FixedExtentScrollController ctrl = FixedExtentScrollController();
+  final FixedExtentScrollController ctrl;
   Recipe? result;
   bool held = false;
-  _Reel(this.cards);
+  _Reel(this.cards, {int start = 0})
+      : ctrl = FixedExtentScrollController(initialItem: start);
 }
 
 class SlotMachine extends StatefulWidget {
   final List<Recipe> pool;
   final void Function(Recipe) onOpen;
-  const SlotMachine({super.key, required this.pool, required this.onOpen});
+
+  /// Zuletzt gerollter Stand: pro Walze {'id': Karten-ID oder null, 'held': bool}
+  final List<Map<String, dynamic>> initialRoll;
+  final void Function(List<Map<String, dynamic>>) onRollChanged;
+
+  const SlotMachine({
+    super.key,
+    required this.pool,
+    required this.onOpen,
+    required this.initialRoll,
+    required this.onRollChanged,
+  });
 
   @override
   State<SlotMachine> createState() => _SlotMachineState();
@@ -99,13 +111,40 @@ class _SlotMachineState extends State<SlotMachine> {
   @override
   void initState() {
     super.initState();
-    _buildReels();
+    _buildReels(restore: true);
   }
 
-  void _buildReels() {
+  void _buildReels({bool restore = false}) {
     final n = min(3, widget.pool.length); // Anzahl Walzen
-    reels = List.generate(n, (_) => _Reel([...widget.pool]..shuffle(rnd)));
+    final list = <_Reel>[];
+    for (var i = 0; i < n; i++) {
+      final cards = [...widget.pool]..shuffle(rnd);
+      var start = 0;
+      Recipe? res;
+      var held = false;
+      if (restore && i < widget.initialRoll.length) {
+        final id = widget.initialRoll[i]['id'];
+        final idx = cards.indexWhere((r) => r.id == id);
+        if (idx >= 0) {
+          start = idx;
+          res = cards[idx];
+          held = widget.initialRoll[i]['held'] == true;
+        }
+      }
+      list.add(_Reel(cards, start: start)
+        ..result = res
+        ..held = held);
+    }
+    reels = list;
     spinning = false;
+  }
+
+  /// Aktuellen Stand der Walzen weitergeben (wird dann gespeichert)
+  void _emit() {
+    if (!mounted) return;
+    widget.onRollChanged([
+      for (final r in reels) {'id': r.result?.id, 'held': r.held}
+    ]);
   }
 
   @override
@@ -123,6 +162,7 @@ class _SlotMachineState extends State<SlotMachine> {
         for (final r in oldReels) {
           r.ctrl.dispose();
         }
+        _emit();
       });
     }
   }
@@ -197,41 +237,52 @@ class _SlotMachineState extends State<SlotMachine> {
       await Future.wait(futures);
     } catch (_) {}
     if (mounted) setState(() => spinning = false);
+    _emit();
   }
 
   Widget _reelView(_Reel reel) {
     return Column(children: [
-      SizedBox(
-        height: 240,
-        child: Stack(children: [
-          ListWheelScrollView.useDelegate(
-            key: ObjectKey(reel),
-            controller: reel.ctrl,
-            physics: const NeverScrollableScrollPhysics(),
-            itemExtent: itemH,
-            diameterRatio: 1.7,
-            perspective: 0.003,
-            overAndUnderCenterOpacity: 0.55,
-            childDelegate: ListWheelChildLoopingListDelegate(
-                children: [for (final c in reel.cards) IndexCardView(c)]),
-          ),
-          IgnorePointer(
-            child: Center(
-              child: Container(
-                height: itemH,
-                decoration: BoxDecoration(
-                  border: Border.symmetric(
-                      horizontal: BorderSide(color: Colors.amber.shade400, width: 2)),
+      GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          final r = reel.result;
+          if (r != null && !spinning) widget.onOpen(r);
+        },
+        child: SizedBox(
+          height: 240,
+          child: Stack(children: [
+            ListWheelScrollView.useDelegate(
+              key: ObjectKey(reel),
+              controller: reel.ctrl,
+              physics: const NeverScrollableScrollPhysics(),
+              itemExtent: itemH,
+              diameterRatio: 1.7,
+              perspective: 0.003,
+              overAndUnderCenterOpacity: 0.55,
+              childDelegate: ListWheelChildLoopingListDelegate(
+                  children: [for (final c in reel.cards) IndexCardView(c)]),
+            ),
+            IgnorePointer(
+              child: Center(
+                child: Container(
+                  height: itemH,
+                  decoration: BoxDecoration(
+                    border: Border.symmetric(
+                        horizontal: BorderSide(color: Colors.amber.shade400, width: 2)),
+                  ),
                 ),
               ),
             ),
-          ),
-        ]),
+          ]),
+        ),
       ),
       TextButton.icon(
         onPressed: (spinning || reel.result == null)
             ? null
-            : () => setState(() => reel.held = !reel.held),
+            : () {
+                setState(() => reel.held = !reel.held);
+                _emit();
+              },
         icon: Icon(reel.held ? Icons.lock : Icons.lock_open, size: 16),
         label: Text(reel.held ? 'Gehalten' : 'Halten'),
         style: TextButton.styleFrom(
@@ -264,9 +315,10 @@ class _SlotMachineState extends State<SlotMachine> {
           label: Text(started ? 'Nochmal drehen' : 'Ziehen!'),
         ),
       ),
-      for (final r in reels)
-        if (r.result != null)
-          RecipeTile(r: r.result!, onTap: () => widget.onOpen(r.result!)),
+      if (started)
+        const Center(
+          child: Text('Karte antippen zum Öffnen', style: TextStyle(fontSize: 12)),
+        ),
     ]);
   }
 }

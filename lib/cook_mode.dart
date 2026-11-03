@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'main.dart';
+import 'export_reminders.dart';
 
 class CookModePage extends StatefulWidget {
   final Recipe recipe;
@@ -43,6 +44,12 @@ class _CookModePageState extends State<CookModePage> {
     final r = widget.recipe;
     return Scaffold(
       appBar: AppBar(title: Text(r.title), actions: [
+        if (r.ingredients.isNotEmpty)
+        IconButton(
+          icon: const Icon(Icons.shopping_cart_outlined),
+          tooltip: 'Zutaten an Erinnerungen',
+          onPressed: () => showIngredientExport(context, r),
+        ),
         IconButton(
             icon: const Icon(Icons.text_decrease),
             onPressed: () => setState(() => size = max(14, size - 2))),

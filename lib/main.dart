@@ -10,6 +10,7 @@ import 'quick_type.dart';
 import 'share_recipes.dart';
 import 'slot.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'export_reminders.dart';
 
 final themeNotifier = ValueNotifier<ThemeMode>(ThemeMode.system);
 
@@ -237,6 +238,9 @@ class _HomePageState extends State<HomePage> {
   DateTime? lastBackup;
   bool hideBackupHint = false;
   late SharedPreferences prefs;
+  List<Map<String, dynamic>> savedRoll = []; // zuletzt gerollte Karten
+  bool _loaded = false;
+  String _lastFilters = '';
 
   @override
   void initState() {
@@ -245,13 +249,55 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _load() async {
-    prefs = await SharedPreferences.getInstance();
-    loadCatColors(prefs);
-    final lb = prefs.getString('lastBackup');
-    lastBackup = lb == null ? null : DateTime.tryParse(lb);
-    final raw = prefs.getStringList('recipes') ?? [];
-    setState(() => all = raw.map((s) => Recipe.fromJson(jsonDecode(s))).toList());
-  }
+  prefs = await SharedPreferences.getInstance();
+  loadCatColors(prefs);
+  final lb = prefs.getString('lastBackup');
+  lastBackup = lb == null ? null : DateTime.tryParse(lb);
+
+  // zuletzt gerollte Karten
+  try {
+    final rj = prefs.getString('roll');
+    if (rj != null) {
+      savedRoll = [
+        for (final e in jsonDecode(rj) as List) Map<String, dynamic>.from(e as Map)
+      ];
+    }
+  } catch (_) {}
+
+  // zuletzt benutzte Filter
+  try {
+    final fj = prefs.getString('filters');
+    if (fj != null) {
+      final m = jsonDecode(fj) as Map<String, dynamic>;
+      final catMap = Cat.values.asNameMap();
+      final effMap = Effort.values.asNameMap();
+      cats.addAll(List<String>.from(m['cats'] ?? []).map((n) => catMap[n]).whereType<Cat>());
+      kinds.addAll(List<bool>.from(m['kinds'] ?? []));
+      efforts.addAll(
+          List<String>.from(m['efforts'] ?? []).map((n) => effMap[n]).whereType<Effort>());
+      onlyFav = m['fav'] == true;
+    }
+  } catch (_) {}
+
+  final raw = prefs.getStringList('recipes') ?? [];
+  setState(() {
+    all = raw.map((s) => Recipe.fromJson(jsonDecode(s))).toList();
+    _loaded = true;
+  });
+}
+
+void _persistFilters() {
+  if (!_loaded) return;
+  final s = jsonEncode({
+    'cats': [for (final c in cats) c.name],
+    'kinds': kinds.toList(),
+    'efforts': [for (final e in efforts) e.name],
+    'fav': onlyFav,
+  });
+  if (s == _lastFilters) return;
+  _lastFilters = s;
+  prefs.setString('filters', s);
+}
 
   Future<void> _save() =>
       prefs.setStringList('recipes', all.map((r) => jsonEncode(r.toJson())).toList());
@@ -627,6 +673,15 @@ Future<void> _markCookedOn(Recipe r) async {
                   },
                 ),
               ),
+              if (r.ingredients.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.shopping_cart_outlined),
+                  label: const Text('Zutaten an Erinnerungen'),
+                  onPressed: () => showIngredientExport(ctx, r),
+                ),
+              ),
             Wrap(spacing: 4, children: [
               TextButton(
                   onPressed: () {
@@ -687,6 +742,7 @@ Future<void> _markCookedOn(Recipe r) async {
 
   @override
   Widget build(BuildContext context) {
+    _persistFilters();
     final usePantry = terms.isNotEmpty;
     final missing = all.where((r) => !r.hasRecipe).length;
     final pausedCount = all.where((r) => r.paused).length;
@@ -720,7 +776,12 @@ Future<void> _markCookedOn(Recipe r) async {
             textAlign: TextAlign.center),
       ));
     } else if (list == null) {
-      body = SlotMachine(pool: pool, onOpen: _open);
+      body = SlotMachine(
+        pool: pool,
+        onOpen: _open,
+        initialRoll: savedRoll,
+        onRollChanged: (roll) => prefs.setString('roll', jsonEncode(roll)),
+      );
     } else if (list.isEmpty) {
       body = Center(
           child: Text(usePantry ? 'Nichts mit diesen Zutaten gefunden' : 'Keine passenden Karten'));
